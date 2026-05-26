@@ -1,0 +1,20 @@
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 临时文件
+*.tmp
+*.log
+
+# 依赖（不需要提交）
+node_modules/
+
+# 工作记忆和项目配置
+.workbuddy/memory/
+.workbuddy/skills/
