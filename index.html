@@ -806,12 +806,8 @@
     <!-- 登录表单 -->
     <div id="login-form">
       <div class="form-group">
-        <label class="form-label">用户名</label>
-        <input type="text" class="form-input" id="login-username" placeholder="请输入用户名" value="admin">
-      </div>
-      <div class="form-group">
-        <label class="form-label">密码</label>
-        <input type="password" class="form-input" id="login-password" placeholder="请输入密码" value="123456">
+        <label class="form-label">登录名</label>
+        <input type="text" class="form-input" id="login-username" placeholder="请输入登录名" value="admin">
       </div>
       <div class="agree-row">
         <input type="checkbox" class="agree-checkbox" id="login-agree" onchange="updateAuthBtn('login')">
@@ -1731,11 +1727,10 @@ function updateAuthBtn(type) {
 
 function doLogin() {
   const u = document.getElementById('login-username').value.trim();
-  const p = document.getElementById('login-password').value;
-  if(!u||!p) { showToast('请输入用户名和密码','error'); return; }
+  if(!u) { showToast('请输入登录名','error'); return; }
   const users = DB.get('users')||[];
-  const user = users.find(x=>x.username===u&&x.password===p);
-  if(!user) { showToast('用户名或密码错误','error'); return; }
+  const user = users.find(x=>x.username===u);
+  if(!user) { showToast('用户不存在','error'); return; }
   currentUser = user;
   DB.set('session', user);
   enterApp();
@@ -1768,8 +1763,23 @@ function doLogout() {
   document.getElementById('main-app').style.display='none';
 }
 
+function migrateLegacyData(uid) {
+  const legacyKeys = ['income','invoices','employees','settings','tags','salary_records','initialized'];
+  legacyKeys.forEach(key => {
+    const legacyData = localStorage.getItem('wqzt_' + key);
+    if(legacyData !== null) {
+      const newKey = 'wqzt_' + uid + '_' + key;
+      if(localStorage.getItem(newKey) === null) {
+        localStorage.setItem(newKey, legacyData);
+      }
+    }
+  });
+}
+
 function enterApp() {
   DB.setUser(currentUser.id);
+  // 迁移旧共享数据到用户专属键
+  migrateLegacyData(currentUser.id);
   // 按用户初始化数据
   if(!DB.get('initialized')) {
     if(currentUser.id==='1') { initTestData(); }
