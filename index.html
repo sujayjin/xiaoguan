@@ -1037,7 +1037,16 @@
             </div>
           </div>
           <div id="employee-salary-view" style="display:none;">
-            <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+              <div class="tabs" style="margin-bottom:0;">
+                <button class="tab-btn active" onclick="switchSalaryTab('current')" id="sal-tab-cur">当月工资</button>
+                <button class="tab-btn" onclick="switchSalaryTab('history')" id="sal-tab-his">历史记录</button>
+              </div>
+              <button class="btn btn-green" onclick="paySalaries()">💰 发放本月工资</button>
+            </div>
+            <!-- 当月工资视图 -->
+            <div id="salary-current-view">
+              <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);">
               <div class="stat-card">
                 <div class="stat-icon blue">💼</div>
                 <div class="stat-value" id="sal-total">¥0</div>
@@ -1066,6 +1075,24 @@
                       <tr><th>姓名</th><th>身份证号</th><th>手机号</th><th>入职时间</th><th>应发工资</th><th>个税（预估）</th><th>实发工资</th></tr>
                     </thead>
                     <tbody id="salary-tbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 历史记录视图 -->
+          <div id="salary-history-view" style="display:none;">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">📅 历史工资发放记录</div>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>月份</th><th>发放日期</th><th>发放人数</th><th>应发总额</th><th>代扣个税</th><th>实发总额</th></tr>
+                    </thead>
+                    <tbody id="salary-history-tbody"></tbody>
                   </table>
                 </div>
               </div>
@@ -1532,9 +1559,13 @@
 // ========================
 // 数据存储 (localStorage)
 // ========================
+const SHARED_KEYS = ['users','session'];
 const DB = {
-  get(key) { try { return JSON.parse(localStorage.getItem('wqzt_'+key)) || null; } catch{ return null; } },
-  set(key, val) { localStorage.setItem('wqzt_'+key, JSON.stringify(val)); },
+  _uid: null,
+  setUser(uid) { this._uid = uid; },
+  _k(key) { return SHARED_KEYS.includes(key) ? 'wqzt_'+key : 'wqzt_'+(this._uid||'no_user')+'_'+key; },
+  get(key) { try { return JSON.parse(localStorage.getItem(this._k(key))) || null; } catch{ return null; } },
+  set(key, val) { localStorage.setItem(this._k(key), JSON.stringify(val)); },
   push(key, item) {
     const arr = this.get(key) || [];
     item.id = item.id || Date.now() + Math.random().toString(36).slice(2);
@@ -1557,13 +1588,15 @@ const DB = {
 // 初始化测试数据
 // ========================
 function initTestData() {
+  // 仅 admin 用户使用测试数据
   if(DB.get('initialized')) return;
 
-  // 测试账号
-  DB.set('users', [{
-    id:'1', username:'admin', password:'123456',
-    company:'明鑫科技有限公司', role:'管理员'
-  }]);
+  // 确保 admin 账号存在（shared）
+  const users = DB.get('users') || [];
+  if (!users.find(u => u.id === '1')) {
+    users.unshift({id:'1', username:'admin', password:'123456', company:'明鑫科技有限公司', role:'管理员'});
+    DB.set('users', users);
+  }
 
   // 企业设置
   DB.set('settings', {
@@ -1662,6 +1695,21 @@ function initTestData() {
   ];
   invoices.forEach(inv => DB.push('invoices', inv));
 
+  DB.set('salary_records', []);
+  DB.set('initialized', true);
+}
+
+function initDefaultData() {
+  // 新注册用户默认空数据
+  DB.set('settings', {
+    company: currentUser.company || '新企业',
+    taxpayer:'小规模纳税人', reminderDays:7
+  });
+  DB.set('employees', []);
+  DB.set('tags', ['产品销售','服务收入','咨询收入','办公费用','差旅费','薪酬支出','采购费用','营销费用','房租','水电费','其他支出']);
+  DB.set('income', []);
+  DB.set('invoices', []);
+  DB.set('salary_records', []);
   DB.set('initialized', true);
 }
 
@@ -1721,6 +1769,12 @@ function doLogout() {
 }
 
 function enterApp() {
+  DB.setUser(currentUser.id);
+  // 按用户初始化数据
+  if(!DB.get('initialized')) {
+    if(currentUser.id==='1') { initTestData(); }
+    else { initDefaultData(); }
+  }
   document.getElementById('auth-page').style.display='none';
   document.getElementById('main-app').style.display='block';
   const settings = DB.get('settings')||{};
@@ -1973,7 +2027,78 @@ function switchEmployeeTab(tab) {
   document.getElementById('employee-salary-view').style.display = tab==='salary'?'':'none';
   document.getElementById('emp-tab-list').classList.toggle('active', tab==='list');
   document.getElementById('emp-tab-salary').classList.toggle('active', tab==='salary');
-  if(tab==='salary') renderSalaryTable();
+  if(tab==='salary') { renderSalaryTable(); switchSalaryTab('current'); }
+}
+
+function switchSalaryTab(tab) {
+  document.getElementById('salary-current-view').style.display = tab==='current'?'':'none';
+  document.getElementById('salary-history-view').style.display = tab==='history'?'':'none';
+  document.getElementById('sal-tab-cur').classList.toggle('active', tab==='current');
+  document.getElementById('sal-tab-his').classList.toggle('active', tab==='history');
+  if(tab==='history') renderSalaryHistory();
+}
+
+function paySalaries() {
+  const emps = DB.get('employees')||[];
+  if(!emps.length) { showToast('没有员工可发放','error'); return; }
+  const today = new Date();
+  const month = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+  const records = DB.get('salary_records')||[];
+  if(records.find(r=>r.month===month)) { showToast('本月工资已发放','warning'); return; }
+  if(!confirm(`确认发放${today.getFullYear()}年${today.getMonth()+1}月工资？共${emps.length}人，应发¥${emps.reduce((s,e)=>s+Number(e.salary),0).toLocaleString()}。`)) return;
+  const record = {
+    id: 'sal_'+Date.now(),
+    month, date: today.toISOString().split('T')[0],
+    employees: emps.map(e=>{
+      const s = Number(e.salary);
+      const tax = calcTax(s);
+      return { empId:e.id, name:e.name, idcard:e.idcard, phone:e.phone, joinDate:e.joinDate, salary:s, tax, netPay:s-tax };
+    })
+  };
+  DB.push('salary_records', record);
+  showToast('本月工资已发放 ✓');
+  renderSalaryTable();
+}
+
+function renderSalaryHistory() {
+  const records = (DB.get('salary_records')||[]).sort((a,b)=>b.month.localeCompare(a.month));
+  const tbody = document.getElementById('salary-history-tbody');
+  if(!records.length) {
+    tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">暂无发放记录</div><div class="empty-desc">点击"发放本月工资"录入发放数据</div></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = records.map(r=>{
+    const totalSalary = r.employees.reduce((s,e)=>s+e.salary,0);
+    const totalTax = r.employees.reduce((s,e)=>s+e.tax,0);
+    const totalNet = r.employees.reduce((s,e)=>s+e.netPay,0);
+    const detailRows = r.employees.map(e=>`<tr>
+      <td><strong>${e.name}</strong></td>
+      <td style="font-family:monospace;font-size:11px;">${maskIdCard(e.idcard)}</td>
+      <td>${e.phone}</td>
+      <td>${e.joinDate}</td>
+      <td>¥${e.salary.toLocaleString()}</td>
+      <td style="color:var(--danger);">¥${e.tax.toLocaleString()}</td>
+      <td style="font-weight:700;color:var(--success);">¥${e.netPay.toLocaleString()}</td>
+    </tr>`).join('');
+    return `<tr class="expandable-row" onclick="toggleHistoryDetail(this,'sal-${r.month}')" data-target="sal-${r.month}">
+      <td><span class="expand-toggle"><span class="arrow">▶</span> <strong>${r.month}</strong></span></td>
+      <td>${r.date}</td>
+      <td>${r.employees.length}人</td>
+      <td>¥${totalSalary.toLocaleString()}</td>
+      <td style="color:var(--danger);">¥${totalTax.toLocaleString()}</td>
+      <td style="font-weight:700;color:var(--success);">¥${totalNet.toLocaleString()}</td>
+    </tr>
+    <tr class="expand-detail-row" id="sal-${r.month}">
+      <td colspan="6">
+        <div class="expand-detail-inner">
+          <table class="detail-mini-table">
+            <thead><tr><th>姓名</th><th>身份证号</th><th>手机号</th><th>入职时间</th><th>应发工资</th><th>个税</th><th>实发</th></tr></thead>
+            <tbody>${detailRows}</tbody>
+          </table>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 function showAddEmployee() {
@@ -3023,7 +3148,12 @@ document.addEventListener('input', function(e) {
 // 初始化
 // ========================
 document.addEventListener('DOMContentLoaded', function() {
-  initTestData();
+  // 确保 admin 账号始终存在（shared）
+  const users = DB.get('users') || [];
+  if(!users.find(u=>u.id==='1')) {
+    users.unshift({id:'1', username:'admin', password:'123456', company:'明鑫科技有限公司', role:'管理员'});
+    DB.set('users', users);
+  }
   // 检查session
   const session = DB.get('session');
   if(session) {
